@@ -17,14 +17,6 @@
             "command": "/home/mahmood/.local/bin/lens hook session-start"
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/clawd-state.sh idle"
-          }
-        ]
       }
     ],
     "PostToolUse": [
@@ -46,14 +38,6 @@
             "command": "/home/mahmood/.local/bin/lens hook prompt"
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/clawd-state.sh busy"
-          }
-        ]
       }
     ],
     "SessionEnd": [
@@ -64,14 +48,6 @@
             "command": "/home/mahmood/.local/bin/lens hook session-end"
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/clawd-state.sh idle"
-          }
-        ]
       }
     ],
     "Stop": [
@@ -80,24 +56,6 @@
           {
             "type": "command",
             "command": "/home/mahmood/.local/bin/lens hook stop"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/clawd-state.sh idle"
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/clawd-state.sh busy"
           }
         ]
       }
