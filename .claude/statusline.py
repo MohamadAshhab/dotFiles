@@ -44,22 +44,42 @@ ROW_STEP = 0.10
 COL_STEP = 0.022
 FLOOR = 0.60
 
-# Glyph rows, verbatim, with their natural relative indents.
-# Field is 11 wide (2 cols of slack) so the head can sway +/-1 without clipping.
-FIELD = 11
-# The eyes are already in the mark: the empty quadrant of '▛' and of '▜' form
-# two symmetric holes in the head. Blinking fills exactly those two quadrants by
-# swapping both cells to '█' -- no characters are added and the width is
-# unchanged. Confirmed by expanding each cell to its 2x2 quadrants.
-# Gaze shifts the holes one quadrant by swapping which of '▛'/'▜'/'█' occupies
-# the cell -- all three already appear in the mark, so no character is added and
-# the head outline (upper half) is byte-identical in every frame.
-TOP = "▐▛███▜▌"      # 7 cols, rests at x=2 -- eyes centred (quadrants 3, 10)
-TOP_LEFT = "▐▜██▛█▌" # eyes left  (quadrants 2, 9)
-TOP_RIGHT = "▐█▜██▛▌"  # eyes right (quadrants 4, 11)
-TOP_SHUT = "▐█████▌" # eye holes filled -- blink
-MID = "▝▜█████▛▘"    # 9 cols, rests at x=1 -- body
-LEGS = "▘▘ ▝▝"       # 5 cols, rests at x=3 -- legs; never blink
+# Muscular Clawd, drawn as a 30x6 pixel grid and packed into quadrant blocks
+# (2x2 pixels per cell) -> 15 cols x 3 rows. Double-biceps pose: fists up,
+# bicep peaks, wide shoulders, broad torso, thick legs.
+FIELD = 17           # 15-col glyph + 2 cols of slack for the sway
+BUFF = [
+    ".111.....111111111111.....111.",   # fists + top of head
+    ".111.....11.111111.11.....111.",   # forearms + eyes (holes at x=11, 18)
+    ".1111..1111111111111111..1111.",   # bicep peaks + shoulders
+    "..11111111111111111111111111..",   # upper arms into chest
+    ".......1111111111111111.......",   # broad torso
+    ".......11111......11111.......",   # thick legs
+]
+EYES = {"c": (11, 18), "l": (10, 17), "r": (12, 19), "shut": ()}
+QUAD = {'0000': ' ', '1111': '█', '1100': '▀', '0011': '▄', '1010': '▌',
+        '0101': '▐', '1000': '▘', '0100': '▝', '0010': '▖', '0001': '▗',
+        '1110': '▛', '1101': '▜', '1011': '▙', '0111': '▟', '1001': '▚',
+        '0110': '▞'}
+
+
+def buff_rows(eyes, pump):
+    g = [list(r) for r in BUFF]
+    for x in range(9, 21):               # clear default eye holes
+        g[1][x] = "1"
+    for x in eyes:
+        g[1][x] = "."
+    if pump:                             # flex pump: fists drop one pixel
+        for x in (1, 2, 3, 26, 27, 28):
+            g[0][x] = "."
+    out = []
+    for y in range(0, len(g), 2):
+        a, b = g[y], g[y + 1]
+        out.append("".join(QUAD["".join("1" if c == "1" else "0" for c in
+                                        (a[x], a[x + 1], b[x], b[x + 1]))]
+                           for x in range(0, len(a), 2)))
+    return out
+
 
 GAP = 3              # columns between the text block and the glyph
 RESERVE = 6          # columns left free for the interface's own spacing
@@ -122,19 +142,67 @@ def paint(row_art, row_idx):
     return "".join(out)
 
 
-def animate(t):
+# Curl frames while working: (cell art, colour map) per row, 15 cols each.
+# Colour map: o = body (shaded terracotta), g = dumbbell (steel grey).
+HEAD_OPEN, HEAD_SHUT = "▐▛███▜▌", "▐█████▌"
+LEGS_ROW = ("    ▐█▀▀▀█▌    ", "    ooooooo    ")
+CURL = {
+    "down": [("    {H}    ",     "    ooooooo    "),
+             ("  ▟█████████▙  ", "  ooooooooooo  "),
+             (" ▐█▌▐█▀▀▀█▌▐█▌ ", " gogooooooogog ")],
+    "mid":  [("    {H}    ",     "    ooooooo    "),
+             ("▐█▌▄▟█████▙▄▐█▌", "gogoooooooooogog"[:15]),
+             LEGS_ROW],
+    "up":   [("▐█▌ {H} ▐█▌",     "gog ooooooo gog"),
+             (" ▜▙▟███████▙▟▛ ", " ooooooooooooo "),
+             LEGS_ROW],
+}
+CURL_CYCLE = ("down", "mid", "up", "up", "mid")   # lift, squeeze at top, lower
+STEEL = (150, 160, 170)
+
+
+def paint_mapped(art, cmap, row_idx):
+    out = []
+    for c, (ch, k) in enumerate(zip(art, cmap)):
+        if ch == " ":
+            out.append(" ")
+        else:
+            out.append(shade(STEEL if k == "g" else BASE, row_idx, c) + ch)
+    out.append(RESET)
+    return "".join(out)
+
+
+def is_busy(session_id):
+    """Hooks touch this flag on prompt/tool use and remove it on Stop."""
+    f = os.path.join(os.environ.get("TMPDIR", "/tmp"),
+                     "clawd-busy-%s" % (session_id or "default"))
+    try:
+        return time.time() - os.path.getmtime(f) < 600   # stale after 10 min
+    except OSError:
+        return False
+
+
+def animate(t, busy=False):
     """Return the three glyph rows for second `t`."""
     f = t % CYCLE
+    if busy:
+        head = HEAD_SHUT if f in BLINKS else HEAD_OPEN
+        frame = CURL[CURL_CYCLE[t % len(CURL_CYCLE)]]
+        rows = []
+        for i, (art, cmap) in enumerate(frame):
+            art = art.replace("{H}", head)
+            pad = (FIELD - len(art)) // 2
+            rows.append(paint_mapped(" " * pad + art + " " * (FIELD - pad - len(art)),
+                                     " " * pad + cmap + " " * (FIELD - pad - len(cmap)), i))
+        return rows
     sway = 1 if f in SWAY_RIGHT else -1 if f in SWAY_LEFT else 0
-    head = (TOP_SHUT if f in BLINKS          # shut wins: no gaze while blinking
-            else TOP_LEFT if f in GAZE_LEFT
-            else TOP_RIGHT if f in GAZE_RIGHT
-            else TOP)
-    return [
-        paint(place(head, 2 + sway), 0),
-        paint(place(MID, 1 + sway), 1),
-        paint(place(LEGS, 3 + sway), 2),
-    ]
+    eyes = (EYES["shut"] if f in BLINKS
+            else EYES["l"] if f in GAZE_LEFT
+            else EYES["r"] if f in GAZE_RIGHT
+            else EYES["c"])
+    pump = f % 2 == 1                    # flex every other second
+    return [paint(place(row, 1 + sway), i)
+            for i, row in enumerate(buff_rows(eyes, pump))]
 
 
 def countdown(secs):
@@ -258,7 +326,7 @@ def main():
 
     # Anchor the glyph just past the widest row rather than at the terminal
     # edge: keeps it visually attached to the text and clear of the margins.
-    glyph = animate(int(now))
+    glyph = animate(int(now), is_busy(dig("session_id")))
     start = min(max(len(p) for p, _ in out) + GAP, usable - FIELD)
     for (plain, colored), g in zip(out, glyph):
         print("%s%s%s" % (colored, " " * max(1, start - len(plain)), g))
@@ -268,4 +336,4 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:
-        print("%s%s%s" % (DIM, MID, RESET))
+        print("%s%s%s" % (DIM, buff_rows(EYES["c"], False)[1], RESET))
